@@ -1,5 +1,8 @@
+from fastapi import FastAPI, HTTPException, Depends
+from sqlalchemy.orm import Session
 
-from fastapi import FastAPI, HTTPException
+from database import get_db
+from models import Player
 
 app = FastAPI(title="ScoutIQ", version="1.0.0")
 
@@ -56,15 +59,18 @@ def home():
 # GET ALL PLAYERS
 
 @app.get("/players")
-def get_players():
+def get_players(db: Session = Depends(get_db)):
+    players = db.query(Player).all()
     return {"players": players}
+    
 
 
 # COUNT PLAYERS
 
 @app.get("/players/count")
-def players_count():
-    return {"count": len(players)}
+def players_count(db: Session = Depends(get_db)):
+    count = db.query(Player).count()
+    return {"count": count}
 
 
 # FILTER PLAYERS
@@ -265,5 +271,16 @@ def get_player_stats_per_90_min(player_id: int):
 # GET PLAYER BY ID
 
 @app.get("/players/{player_id}")
-def get_player(player_id: int):
-    return find_player(player_id)
+def get_player(player_id: int, db: Session = Depends(get_db)):
+
+    player = db.query(Player).filter(
+        Player.id == player_id
+    ).first()
+
+    if player is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Player not found"
+        )
+    return player
+    
