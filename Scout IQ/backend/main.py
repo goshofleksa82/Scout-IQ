@@ -51,6 +51,35 @@ def calculate_stats(player):
     }
 
 
+def get_comparison_stats(player: Player):
+    stats = {
+        "name": player.name,
+        "club": player.club,
+        "position": player.position,
+        "goals": player.goals,
+        "assists": player.assists,
+        "minutes_played": player.minutes_played,
+        "goals_per_90": None,
+        "assists_per_90": None,
+        "goal_contributions_per_90": None
+    }
+
+    if player.minutes_played > 0:
+        stats["goals_per_90"] = round(
+            player.goals * 90 / player.minutes_played, 2
+        )
+
+        stats["assists_per_90"] = round(
+            player.assists * 90 / player.minutes_played, 2
+        )
+
+        stats["goal_contributions_per_90"] = round(
+            (player.goals + player.assists) * 90
+            / player.minutes_played, 2
+        )
+
+    return stats
+
 # HOME
 
 @app.get("/")
@@ -128,9 +157,15 @@ def filter_players(
 # SORT PLAYERS
 
 @app.get("/players/sort")
-def sort_players(sort_by: str = "goals", order: str = "desc"):
+def sort_players(
+    sort_by: str = "goals", 
+    order: str = "desc",
+    db: Session = Depends(get_db)
+    ):
 
-    if sort_by not in ["goals", "assists", "age"]:
+    allowed_fields = ["goals", "assists", "age"]
+
+    if sort_by not in allowed_fields:
         raise HTTPException(
             status_code=400,
             detail="Invalid sorting field"
@@ -142,134 +177,188 @@ def sort_players(sort_by: str = "goals", order: str = "desc"):
             detail="Invalid sorting order"
         )
 
-    return sorted(
-        players,
-        key=lambda player: player[sort_by],
-        reverse=(order == "desc")
-    )
+    column = getattr(Player, sort_by)
 
+    if order == "asc":
+        query = db.query(Player).order_by(column.asc())
+    else:
+        query = db.query(Player).order_by(column.desc())    
+
+    return query.all()
 
 # PLAYER RANKINGS
 
+
+
 @app.get("/players/rankings")
-def player_rankings(
+def get_player_rankings(
     metric: str = "goals_per_90",
     position: str | None = None,
-    min_minutes: int = 0
+    min_minutes: int = 0,
+    db: Session = Depends(get_db)
 ):
-
-    supported_metrics = [
+    allowed_metrics = [
         "goals_per_90",
         "assists_per_90",
         "goal_contributions_per_90"
     ]
 
-    # Validate metric
-    if metric not in supported_metrics:
+    # Validate parameters
+    if metric not in allowed_metrics:
         raise HTTPException(
             status_code=400,
             detail="Invalid ranking metric"
         )
 
-    # Validate minimum minutes
     if min_minutes < 0:
         raise HTTPException(
             status_code=400,
             detail="Minimum minutes cannot be negative"
         )
 
-    ranking_list = []
+    # Retrieve eligible players from PostgreSQL
+    query = db.query(Player).filter(
+        Player.minutes_played > 0,
+        Player.minutes_played >= min_minutes
+    )
+
+    # Optional position filter
+    if position is not None:
+        query = query.filter(
+            func.lower(Player.position) == position.lower()
+        )
+
+    players = query.all()
+
+    # Calculate rankings
+    rankings = []
 
     for player in players:
+        if metric == "goals_per_90":
+            value = player.goals * 90 / player.minutes_played
 
-        # Filter by position
-        if position is not None:
-            if player["position"].casefold() != position.casefold():
-                continue
+        elif metric == "assists_per_90":
+            value = player.assists * 90 / player.minutes_played
 
-        # Exclude players with insufficient minutes
-        if player["minutes_played"] < min_minutes:
-            continue
+        else:
+            value = (
+                (player.goals + player.assists) * 90
+                / player.minutes_played
+            )
 
-        # Exclude zero or negative minutes
-        if player["minutes_played"] <= 0:
-            continue
-
-        # Calculate player statistics
-        stats = calculate_stats(player)
-
-        ranking_list.append({
-            "player_id": player["id"],
-            "name": player["name"],
-            "value": stats[metric]
+        rankings.append({
+            "player_id": player.id,
+            "name": player.name,
+            "position": player.position,
+            "value": value
         })
 
-    # Sort highest to lowest
-    ranking_list.sort(
+    # Sort by unrounded values, highest first
+    rankings.sort(
         key=lambda player: player["value"],
         reverse=True
     )
 
-    # Assign sequential ranks
-    for index, player in enumerate(ranking_list, start=1):
-        player["rank"] = index
+    # Assign ranks and round displayed values
+    for rank, player in enumerate(rankings, start=1):
+        player["rank"] = rank
+        player["value"] = round(player["value"], 2)
 
     return {
         "metric": metric,
-        "rankings": ranking_list
+        "rankings": rankings
     }
+
+
 
 
 # COMPARE PLAYERS
 
-@app.get("/players/compare")
-def compare_players(player1: int, player2: int):
 
+@app.get("/players/compare")
+def compare_players(
+    player1: int,
+    player2: int,
+    db: Session = Depends(get_db)
+):
+    # Validate IDs
     if player1 == player2:
         raise HTTPException(
             status_code=400,
             detail="Cannot compare a player with themselves"
         )
 
-    first_player = find_player(player1)
-    second_player = find_player(player2)
+    # Retrieve both players from PostgreSQL
+    first_player = db.query(Player).filter(
+        Player.id == player1
+    ).first()
 
-    stats1 = calculate_stats(first_player)
-    stats2 = calculate_stats(second_player)
+    second_player = db.query(Player).filter(
+        Player.id == player2
+    ).first()
 
-    goals90_1 = (
-        first_player["goals"] * 90
-        / first_player["minutes_played"]
-    )
-
-    goals90_2 = (
-        second_player["goals"] * 90
-        / second_player["minutes_played"]
-    )
-
-    if goals90_1 > goals90_2:
-        better_goalscorer = first_player["name"]
-    elif goals90_1 < goals90_2:
-        better_goalscorer = second_player["name"]
-    else:
-        better_goalscorer = "Tie"
+    # Check if both players exist
+    if first_player is None or second_player is None:
+        raise HTTPException(
+            status_code=404,
+            detail="One or both players not found"
+        )
 
     return {
-        "player1": stats1,
-        "player2": stats2,
-        "comparison": {
-            "better_goalscorer": better_goalscorer
-        }
+        "player1": get_comparison_stats(first_player),
+        "player2": get_comparison_stats(second_player)
     }
+
 
 
 # PLAYER STATS PER 90
 
-@app.get("/players/{player_id}/stats")
-def get_player_stats_per_90_min(player_id: int):
 
-    player = find_player(player_id)
-    return calculate_stats(player)
+@app.get("/players/{player_id}/stats")
+def get_player_stats(
+    player_id: int,
+    db: Session = Depends(get_db)
+):
+    # Retrieve player from PostgreSQL
+    player = db.query(Player).filter(
+        Player.id == player_id
+    ).first()
+
+    # Check if player exists
+    if player is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Player not found"
+        )
+
+    # Prevent division by zero
+    if player.minutes_played <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Player has no minutes played"
+        )
+
+    # Calculate statistics
+    goals_per_90 = round(
+        (player.goals * 90) / player.minutes_played, 2
+    )
+
+    assists_per_90 = round(
+        (player.assists * 90) / player.minutes_played, 2
+    )
+
+    goal_contributions_per_90 = round(
+        ((player.goals + player.assists) * 90)
+        / player.minutes_played, 2
+    )
+
+    return {
+        "player_id": player.id,
+        "name": player.name,
+        "goals_per_90": goals_per_90,
+        "assists_per_90": assists_per_90,
+        "goal_contributions_per_90": goal_contributions_per_90
+    }
 
 
 # GET PLAYER BY ID
