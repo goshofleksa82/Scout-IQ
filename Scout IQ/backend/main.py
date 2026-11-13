@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends
+
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from database import get_db
 from models import Player
@@ -80,7 +82,8 @@ def filter_players(
     position: str | None = None,
     club: str | None = None,
     min_age: int | None = None,
-    max_age: int | None = None
+    max_age: int | None = None,
+    db: Session = Depends(get_db)
 ):
     if min_age is not None and min_age < 0:
         raise HTTPException(
@@ -101,25 +104,26 @@ def filter_players(
                 detail="Minimum age cannot be greater than maximum age"
             )
 
-    filtered_players = []
+    query = db.query(Player)
 
-    for player in players:
-        if position is not None and player["position"].casefold() != position.casefold():
-            continue
+    if position is not None:
+        query = query.filter(
+            func.lower(Player.position) == position.lower()
+        )
+    if club is not None:
+        query = query.filter(
+            func.lower(Player.club) == club.lower()
+        )
+    if min_age is not None:
+        query = query.filter(
+            Player.age >= min_age
+        )    
+    if max_age is not None:
+        query = query.filter(
+            Player.age <= max_age
+        )
 
-        if club is not None and player["club"].casefold() != club.casefold():
-            continue
-
-        if min_age is not None and player["age"] < min_age:
-            continue
-
-        if max_age is not None and player["age"] > max_age:
-            continue
-
-        filtered_players.append(player)
-
-    return filtered_players
-
+    return query.all()
 
 # SORT PLAYERS
 
