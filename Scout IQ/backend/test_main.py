@@ -11,6 +11,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from conftest import TestingSessionLocal, test_engine
 from models import Player
+from unittest.mock import patch
+from sqlalchemy.exc import SQLAlchemyError
 
 
 def get_players(client, path):
@@ -269,3 +271,183 @@ def test_get_all_players_from_database(client, seed_test_players):
     assert 'players' in data
     assert len(data['players']) == 3
     assert 'Erling Haaland' in [p['name'] for p in data['players']]
+
+
+def test_create_player(client):
+    payload = {
+        "name": "Jude Bellingham",
+        "age": 23,
+        "position": "CM",
+        "club": "Real Madrid",
+        "goals": 12,
+        "assists": 8,
+        "minutes_played": 2100
+    }
+
+    response = client.post("/players", json=payload)
+
+    assert response.status_code == 201
+
+    data = response.json()
+
+    assert isinstance(data["id"], int)
+
+    for field, value in payload.items():
+        assert data[field] == value
+
+    # Verify the player was saved to PostgreSQL
+    player_id = data["id"]
+    get_response = client.get(f"/players/{player_id}")
+
+    assert get_response.status_code == 200
+    assert get_response.json()["name"] == "Jude Bellingham"
+
+
+def test_create_player_negative_goals(client):
+    payload = {
+        "name": "Invalid Player",
+        "age": 23,
+        "position": "CM",
+        "club": "Real Madrid",
+        "goals": -1,
+        "assists": 8,
+        "minutes_played": 2100
+    }
+
+    response = client.post("/players", json=payload)
+
+    assert response.status_code == 422
+
+def test_create_player_missing_name(client):
+    payload = {
+        "age": 23,
+        "position": "CM",
+        "club": "Real Madrid",
+        "goals": 12,
+        "assists": 8,
+        "minutes_played": 2100
+    }
+
+    response = client.post("/players", json=payload)
+
+    assert response.status_code == 422
+
+@pytest.fixture
+def valid_player_payload():
+    return {
+        "name": "Jude Bellingham",
+        "age": 23,
+        "position": "CM",
+        "club": "Real Madrid",
+        "goals": 12,
+        "assists": 8,
+        "minutes_played": 2100
+    }
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["name", "club", "position"]
+)
+def test_create_player_rejects_blank_fields(
+    client, valid_player_payload, field
+):
+    payload = valid_player_payload.copy()
+    payload[field] = "   "
+
+    response = client.post("/players", json=payload)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["name", "club", "position", "age",
+     "goals", "assists", "minutes_played"]
+)
+def test_create_player_rejects_missing_fields(
+    client, valid_player_payload, field
+):
+    payload = valid_player_payload.copy()
+    del payload[field]
+
+    response = client.post("/players", json=payload)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["age", "goals", "assists", "minutes_played"]
+)
+def test_create_player_rejects_negative_values(
+    client, valid_player_payload, field
+):
+    payload = valid_player_payload.copy()
+    payload[field] = -1
+
+    response = client.post("/players", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_create_player_and_retrieve(
+    client, valid_player_payload
+):
+    response = client.post(
+        "/players",
+        json=valid_player_payload
+    )
+
+    assert response.status_code == 201
+
+    data = response.json()
+    assert isinstance(data["id"], int)
+    assert data["id"] > 0
+
+    for field, value in valid_player_payload.items():
+        assert data[field] == value
+
+    get_response = client.get(
+        f"/players/{data['id']}"
+    )
+
+    assert get_response.status_code == 200
+    assert get_response.json()["id"] == data["id"]
+    assert get_response.json()["name"] == "Jude Bellingham"
+
+
+def test_create_player_database_failure_rolls_back(
+    client, valid_player_payload
+):
+    from main import app
+    from database import get_db
+
+    # Use a controlled mock session for this failure test.
+    from unittest.mock import MagicMock
+
+    mock_db = MagicMock()
+    mock_db.commit.side_effect = SQLAlchemyError(
+        "Simulated database failure"
+    )
+
+    def override_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_db
+
+    try:
+        response = client.post(
+            "/players",
+            json=valid_player_payload
+        )
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Unable to create player"
+        mock_db.rollback.assert_called_once()
+
+    finally:
+        # Restore the original test database override.
+        from conftest import override_get_db
+        app.dependency_overrides[get_db] = override_get_db
+

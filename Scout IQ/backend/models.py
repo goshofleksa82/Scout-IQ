@@ -10,7 +10,7 @@ class Base(DeclarativeBase):
 class Player(Base):
     __tablename__ = "players"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     age: Mapped[int] = mapped_column(nullable=False)
     position: Mapped[str] = mapped_column(String(10), nullable=False)

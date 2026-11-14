@@ -62,3 +62,23 @@ class PlayerRankingEntry(BaseModel):
 class PlayerRankingsResponse(BaseModel):
     metric: str
     rankings: list[PlayerRankingEntry]
+
+class PlayerCreate(BaseModel):
+    name: str = Field(min_length=1)
+    age: int = Field(ge=0)
+    position: str = Field(min_length=1)
+    club: str = Field(min_length=1)
+    goals: int = Field(ge=0)
+    assists: int = Field(ge=0)
+    minutes_played: int = Field(ge=0)
+
+    @field_validator("name", "position", "club")
+    @classmethod
+    def reject_blank(cls, value: str) -> str:
+        value = value.strip()
+
+        if not value:
+            raise ValueError("Field cannot be blank")
+
+        return value
+

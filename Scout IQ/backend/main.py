@@ -1,10 +1,14 @@
 """ScoutIQ API: database-backed endpoints with Pydantic response validation."""
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
+import logging
 
 from database import get_db
 from models import Player
+
 from schemas import (
     PlayerComparisonResponse,
     PlayerListResponse,
@@ -12,9 +16,12 @@ from schemas import (
     PlayerRankingsResponse,
     PlayerResponse,
     PlayerStatsResponse,
+    PlayerCreate
 )
 
 app = FastAPI(title='ScoutIQ', version='1.0.0')
+
+logger = logging.getLogger(__name__)
 
 
 @app.get('/')
@@ -155,3 +162,46 @@ def get_player(player_id: int, db: Session = Depends(get_db)):
     if player is None:
         raise HTTPException(status_code=404, detail='Player not found')
     return player
+
+@app.post(
+    "/players",
+    response_model=PlayerResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def create_player(
+    player: PlayerCreate,
+    db: Session = Depends(get_db)
+):
+    new_player = Player(**player.model_dump())
+
+    try:
+        db.add(new_player)
+        db.commit()
+        db.refresh(new_player)
+
+    except IntegrityError:
+        db.rollback()
+
+        logger.exception(
+            "Database integrity violation while creating player"
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Player could not be created due to a database constraint"
+        ) from None
+
+    except SQLAlchemyError:
+        db.rollback()
+
+        logger.exception(
+            "Database error while creating player"
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to create player"
+        ) from None
+
+    return new_player
+
