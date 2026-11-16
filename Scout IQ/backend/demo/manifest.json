@@ -1,0 +1,41 @@
+{
+  "dataset_sha256": "f98762107f4eac92f0ba086b2c849f59659822578e24b8126015105a23bfc050",
+  "counts": {
+    "clubs": 12,
+    "players": 42,
+    "matches": 13,
+    "statistics": 195,
+    "omitted": 2
+  },
+  "validation": {
+    "known_source_goal_fields_matched": true,
+    "shootouts_excluded": true,
+    "all_statistics_pass_schema_validation": true
+  },
+  "source_files": [
+    {
+      "article_doi": "10.6084/m9.figshare.7765196.v3",
+      "name": "players.json",
+      "download_url": "https://ndownloader.figshare.com/files/15073721",
+      "md5": "f28ddf6326281efeda6488b2169f5609"
+    },
+    {
+      "article_doi": "10.6084/m9.figshare.7765310.v3",
+      "name": "teams.json",
+      "download_url": "https://ndownloader.figshare.com/files/15073697",
+      "md5": "1381ff9449f21105090729cf0e086b5b"
+    },
+    {
+      "article_doi": "10.6084/m9.figshare.7770599.v1",
+      "name": "events.zip",
+      "download_url": "https://ndownloader.figshare.com/files/14464685",
+      "md5": "7c20e8647e7eda58d7838a0c7b1ec6ab"
+    },
+    {
+      "article_doi": "10.6084/m9.figshare.7770422.v1",
+      "name": "matches.zip",
+      "download_url": "https://ndownloader.figshare.com/files/14464622",
+      "md5": "51d80beb17480919f69a53a0152c2d71"
+    }
+  ]
+}

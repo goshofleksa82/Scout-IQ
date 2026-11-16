@@ -276,7 +276,7 @@ def test_get_all_players_from_database(client, seed_test_players):
     assert 'Erling Haaland' in [p['name'] for p in data['players']]
 
 
-def test_create_player(client):
+def test_create_player(admin_client):
     payload = {
         "name": "Jude Bellingham",
         "age": 23,
@@ -287,7 +287,7 @@ def test_create_player(client):
         "minutes_played": 2100
     }
 
-    response = client.post("/players", json=payload)
+    response = admin_client.post("/players", json=payload)
 
     assert response.status_code == 201
 
@@ -300,13 +300,13 @@ def test_create_player(client):
 
     # Verify the player was saved to PostgreSQL
     player_id = data["id"]
-    get_response = client.get(f"/players/{player_id}")
+    get_response = admin_client.get(f"/players/{player_id}")
 
     assert get_response.status_code == 200
     assert get_response.json()["name"] == "Jude Bellingham"
 
 
-def test_create_player_negative_goals(client):
+def test_create_player_negative_goals(admin_client):
     payload = {
         "name": "Invalid Player",
         "age": 23,
@@ -317,11 +317,11 @@ def test_create_player_negative_goals(client):
         "minutes_played": 2100
     }
 
-    response = client.post("/players", json=payload)
+    response = admin_client.post("/players", json=payload)
 
     assert response.status_code == 422
 
-def test_create_player_missing_name(client):
+def test_create_player_missing_name(admin_client):
     payload = {
         "age": 23,
         "position": "CM",
@@ -331,7 +331,7 @@ def test_create_player_missing_name(client):
         "minutes_played": 2100
     }
 
-    response = client.post("/players", json=payload)
+    response = admin_client.post("/players", json=payload)
 
     assert response.status_code == 422
 
@@ -353,12 +353,12 @@ def valid_player_payload():
     ["name", "club", "position"]
 )
 def test_create_player_rejects_blank_fields(
-    client, valid_player_payload, field
+    admin_client, valid_player_payload, field
 ):
     payload = valid_player_payload.copy()
     payload[field] = "   "
 
-    response = client.post("/players", json=payload)
+    response = admin_client.post("/players", json=payload)
 
     assert response.status_code == 422
 
@@ -369,12 +369,12 @@ def test_create_player_rejects_blank_fields(
      "goals", "assists", "minutes_played"]
 )
 def test_create_player_rejects_missing_fields(
-    client, valid_player_payload, field
+    admin_client, valid_player_payload, field
 ):
     payload = valid_player_payload.copy()
     del payload[field]
 
-    response = client.post("/players", json=payload)
+    response = admin_client.post("/players", json=payload)
 
     assert response.status_code == 422
 
@@ -384,20 +384,20 @@ def test_create_player_rejects_missing_fields(
     ["age", "goals", "assists", "minutes_played"]
 )
 def test_create_player_rejects_negative_values(
-    client, valid_player_payload, field
+    admin_client, valid_player_payload, field
 ):
     payload = valid_player_payload.copy()
     payload[field] = -1
 
-    response = client.post("/players", json=payload)
+    response = admin_client.post("/players", json=payload)
 
     assert response.status_code == 422
 
 
 def test_create_player_and_retrieve(
-    client, valid_player_payload
+    admin_client, valid_player_payload
 ):
-    response = client.post(
+    response = admin_client.post(
         "/players",
         json=valid_player_payload
     )
@@ -411,7 +411,7 @@ def test_create_player_and_retrieve(
     for field, value in valid_player_payload.items():
         assert data[field] == value
 
-    get_response = client.get(
+    get_response = admin_client.get(
         f"/players/{data['id']}"
     )
 
@@ -421,7 +421,7 @@ def test_create_player_and_retrieve(
 
 
 def test_create_player_database_failure_rolls_back(
-    client, valid_player_payload
+    admin_client, valid_player_payload, authenticated_admin_for_database_failure
 ):
     from main import app
     from database import get_db
@@ -440,7 +440,7 @@ def test_create_player_database_failure_rolls_back(
     app.dependency_overrides[get_db] = override_db
 
     try:
-        response = client.post(
+        response = admin_client.post(
             "/players",
             json=valid_player_payload
         )
@@ -458,8 +458,8 @@ def test_create_player_database_failure_rolls_back(
 import pytest
 
 
-def test_patch_one_field(client, seed_test_players):
-    response = client.patch("/players/1", json={"goals": 25})
+def test_patch_one_field(admin_client, seed_test_players):
+    response = admin_client.patch("/players/1", json={"goals": 25})
 
     assert response.status_code == 200
     player = response.json()
@@ -469,8 +469,8 @@ def test_patch_one_field(client, seed_test_players):
     assert player["name"] == "Erling Haaland"
 
 
-def test_patch_multiple_fields(client, seed_test_players):
-    response = client.patch(
+def test_patch_multiple_fields(admin_client, seed_test_players):
+    response = admin_client.patch(
         "/players/1",
         json={"goals": 25, "assists": 7}
     )
@@ -485,9 +485,9 @@ def test_patch_multiple_fields(client, seed_test_players):
     ["age", "goals", "assists", "minutes_played"]
 )
 def test_patch_rejects_negative(
-    client, seed_test_players, field
+    admin_client, seed_test_players, field
 ):
-    response = client.patch(
+    response = admin_client.patch(
         "/players/1",
         json={field: -1}
     )
@@ -500,9 +500,9 @@ def test_patch_rejects_negative(
     ["name", "club", "position"]
 )
 def test_patch_rejects_blank(
-    client, seed_test_players, field
+    admin_client, seed_test_players, field
 ):
-    response = client.patch(
+    response = admin_client.patch(
         "/players/1",
         json={field: "   "}
     )
@@ -518,9 +518,9 @@ def test_patch_rejects_blank(
     ]
 )
 def test_patch_rejects_null(
-    client, seed_test_players, field
+    admin_client, seed_test_players, field
 ):
-    response = client.patch(
+    response = admin_client.patch(
         "/players/1",
         json={field: None}
     )
@@ -528,8 +528,8 @@ def test_patch_rejects_null(
     assert response.status_code == 422
 
 
-def test_patch_nonexistent_player(client):
-    response = client.patch(
+def test_patch_nonexistent_player(admin_client):
+    response = admin_client.patch(
         "/players/999",
         json={"goals": 10}
     )
@@ -537,39 +537,39 @@ def test_patch_nonexistent_player(client):
     assert response.status_code == 404
 
 
-def test_patch_empty_body(client, seed_test_players):
-    response = client.patch("/players/1", json={})
+def test_patch_empty_body(admin_client, seed_test_players):
+    response = admin_client.patch("/players/1", json={})
 
     assert response.status_code == 200
     assert response.json()["goals"] == 20
 
 
-def test_patch_persists(client, seed_test_players):
-    response = client.patch(
+def test_patch_persists(admin_client, seed_test_players):
+    response = admin_client.patch(
         "/players/1",
         json={"goals": 30}
     )
 
     assert response.status_code == 200
 
-    get_response = client.get("/players/1")
+    get_response = admin_client.get("/players/1")
 
     assert get_response.status_code == 200
     assert get_response.json()["goals"] == 30
 
 
-def test_delete_player(client, seed_test_players):
-    response = client.delete("/players/1")
+def test_delete_player(admin_client, seed_test_players):
+    response = admin_client.delete("/players/1")
 
     assert response.status_code == 204
     assert response.content == b""
 
-    get_response = client.get("/players/1")
+    get_response = admin_client.get("/players/1")
     assert get_response.status_code == 404
 
 
-def test_delete_nonexistent_player(client):
-    response = client.delete("/players/999")
+def test_delete_nonexistent_player(admin_client):
+    response = admin_client.delete("/players/999")
 
     assert response.status_code == 404
 
@@ -581,7 +581,7 @@ def test_delete_nonexistent_player(client):
     ]
 )
 def test_database_lookup_failure(
-    client, method, expected_detail
+    admin_client, method, expected_detail, authenticated_admin_for_database_failure
 ):
     mock_db = MagicMock()
     mock_db.get.side_effect = SQLAlchemyError(
@@ -596,12 +596,12 @@ def test_database_lookup_failure(
 
     try:
         if method == "patch":
-            response = client.patch(
+            response = admin_client.patch(
                 "/players/1",
                 json={"goals": 25}
             )
         else:
-            response = client.delete("/players/1")
+            response = admin_client.delete("/players/1")
 
         assert response.status_code == 500
         assert response.json()["detail"] == expected_detail
@@ -624,7 +624,7 @@ def test_database_lookup_failure(
     ]
 )
 def test_failed_commit_rolls_back(
-    client, method, error_type, expected_status
+    admin_client, method, error_type, expected_status, authenticated_admin_for_database_failure
 ):
     mock_db = MagicMock()
 
@@ -661,12 +661,12 @@ def test_failed_commit_rolls_back(
 
     try:
         if method == "patch":
-            response = client.patch(
+            response = admin_client.patch(
                 "/players/1",
                 json={"goals": 25}
             )
         else:
-            response = client.delete("/players/1")
+            response = admin_client.delete("/players/1")
 
         assert response.status_code == expected_status
 

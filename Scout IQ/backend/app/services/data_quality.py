@@ -1,0 +1,26 @@
+from datetime import datetime,timezone
+from sqlalchemy import and_,or_,func,select
+from app.models import Player,Club,Season,Match,MatchEvent,MatchParticipant,Membership,PlayerMatchStats,ImportBatch
+
+
+def run_checks(db):
+    checks=[]
+    def check(code,label,severity,query,note):
+        total=query.count()
+        ids=[row[0] for row in query.limit(20).all()]
+        checks.append({'code':code,'label':label,'severity':severity,'affected':total,'sample_ids':ids,'note':note})
+    check('player_provenance','Player records with unspecified provenance','warning',db.query(Player.id).filter(Player.import_batch_id.is_(None)).order_by(Player.id),'Legacy and manual values need a documented source and redistribution basis.')
+    check('unknown_record_dates','Player record dates are unknown','info',db.query(Player.id).filter(Player.created_at.is_(None)).order_by(Player.id),'Legacy records retain unknown timestamps; migration time is not an observation date.')
+    check('club_name_mismatch','Current club name differs from its referenced club','error',db.query(Player.id).join(Club,Club.id==Player.club_id).filter(Player.club!=Club.name).order_by(Player.id),'Use structured club updates and the transfer workflow to resolve inconsistencies.')
+    check('incomplete_optional_stats','Match records with incomplete optional metrics','warning',db.query(PlayerMatchStats.id).filter(or_(*(getattr(PlayerMatchStats,key).is_(None) for key in ['shots','passes_attempted','passes_completed','tackles','progressive_passes','progressive_carries']))).order_by(PlayerMatchStats.id),'Missing actions remain unknown and can prevent metrics, scores or radar axes.')
+    check('manual_stats','Statistics with unspecified import rights','warning',db.query(PlayerMatchStats.id).filter(PlayerMatchStats.import_batch_id.is_(None)).order_by(PlayerMatchStats.id),'Manual entries do not carry an import rights declaration.')
+    check('inconsistent_actions','Inconsistent action totals','error',db.query(PlayerMatchStats.id).filter(or_(PlayerMatchStats.goals>PlayerMatchStats.shots,PlayerMatchStats.passes_completed>PlayerMatchStats.passes_attempted)).order_by(PlayerMatchStats.id),'Goals cannot exceed known shots and completed passes cannot exceed attempts.')
+    check('invalid_match_stats','Statistics on scheduled matches or excessive playing time','error',db.query(PlayerMatchStats.id).join(Match,Match.id==PlayerMatchStats.match_id).filter(or_(Match.status=='scheduled',PlayerMatchStats.minutes_played>Match.duration_minutes+30)).order_by(PlayerMatchStats.id),'Recorded actions must fit a played match and its duration allowance.')
+    check('match_season_dates','Matches outside their assigned season','error',db.query(Match.id).join(Season,Season.id==Match.season_id).filter(or_(func.date(func.timezone('UTC',Match.kickoff_at))<Season.starts_on,func.date(func.timezone('UTC',Match.kickoff_at))>Season.ends_on)).order_by(Match.id),'Match dates use UTC season boundaries.')
+    membership_exists=select(Membership.id).where(Membership.player_id==MatchParticipant.player_id,Membership.club_id==MatchParticipant.club_id,Membership.joined_on<=func.date(func.timezone('UTC',Match.kickoff_at)),or_(Membership.left_on.is_(None),Membership.left_on>func.date(func.timezone('UTC',Match.kickoff_at)))).exists()
+    check('roster_membership','Roster entries outside dated club membership','error',db.query(MatchParticipant.player_id).join(Match,Match.id==MatchParticipant.match_id).filter(~membership_exists).distinct().order_by(MatchParticipant.player_id),'A participant needs club membership on the match date.')
+    event_counts=db.query(MatchEvent.match_id.label('match_id'),MatchEvent.player_id.label('player_id'),MatchEvent.event_type.label('kind'),func.count().label('n')).group_by(MatchEvent.match_id,MatchEvent.player_id,MatchEvent.event_type).subquery()
+    check('event_totals','Statistics below recorded goal or assist events','error',db.query(PlayerMatchStats.id).join(event_counts,and_(event_counts.c.match_id==PlayerMatchStats.match_id,event_counts.c.player_id==PlayerMatchStats.player_id)).filter(or_(and_(event_counts.c.kind=='goal',PlayerMatchStats.goals<event_counts.c.n),and_(event_counts.c.kind=='assist',PlayerMatchStats.assists<event_counts.c.n))).distinct().order_by(PlayerMatchStats.id),'Match totals cannot contradict recorded events.')
+    mixed=db.query(PlayerMatchStats.player_id).join(Match,Match.id==PlayerMatchStats.match_id).outerjoin(ImportBatch,ImportBatch.id==PlayerMatchStats.import_batch_id).filter(Match.status=='finished').group_by(PlayerMatchStats.player_id,Match.season_id).having(func.count(func.distinct(func.lower(func.coalesce(ImportBatch.source,'manual'))))>1).subquery()
+    check('mixed_sources','Players with multiple sources in a season','warning',db.query(mixed.c.player_id).distinct().order_by(mixed.c.player_id),'Choose a single provider before peer or similarity comparisons.')
+    return {'checked_at':datetime.now(timezone.utc).isoformat(),'checks':checks,'error_count':sum(c['affected'] for c in checks if c['severity']=='error'),'warning_count':sum(c['affected'] for c in checks if c['severity']=='warning'),'note':'Counts are affected records per check and may overlap. These checks flag review work; they do not verify real-world accuracy or legal rights.'}

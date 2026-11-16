@@ -1,0 +1,2 @@
+# Migration tooling; use the existing ScoutIQ application environment.
+alembic>=1.16,<2

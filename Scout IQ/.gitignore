@@ -1,0 +1,5 @@
+# Deployment secrets and runtime state
+/deploy/.env
+/deploy/.env.*
+!/deploy/.env.example
+*.dump
