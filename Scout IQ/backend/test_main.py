@@ -11,8 +11,11 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from conftest import TestingSessionLocal, test_engine
 from models import Player
-from unittest.mock import patch
-from sqlalchemy.exc import SQLAlchemyError
+from unittest.mock import patch, MagicMock
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+from main import app
+from database import get_db
+
 
 
 def get_players(client, path):
@@ -451,3 +454,240 @@ def test_create_player_database_failure_rolls_back(
         from conftest import override_get_db
         app.dependency_overrides[get_db] = override_get_db
 
+
+import pytest
+
+
+def test_patch_one_field(client, seed_test_players):
+    response = client.patch("/players/1", json={"goals": 25})
+
+    assert response.status_code == 200
+    player = response.json()
+
+    assert player["goals"] == 25
+    assert player["assists"] == 5
+    assert player["name"] == "Erling Haaland"
+
+
+def test_patch_multiple_fields(client, seed_test_players):
+    response = client.patch(
+        "/players/1",
+        json={"goals": 25, "assists": 7}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["goals"] == 25
+    assert response.json()["assists"] == 7
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["age", "goals", "assists", "minutes_played"]
+)
+def test_patch_rejects_negative(
+    client, seed_test_players, field
+):
+    response = client.patch(
+        "/players/1",
+        json={field: -1}
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["name", "club", "position"]
+)
+def test_patch_rejects_blank(
+    client, seed_test_players, field
+):
+    response = client.patch(
+        "/players/1",
+        json={field: "   "}
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "name", "age", "position", "club",
+        "goals", "assists", "minutes_played"
+    ]
+)
+def test_patch_rejects_null(
+    client, seed_test_players, field
+):
+    response = client.patch(
+        "/players/1",
+        json={field: None}
+    )
+
+    assert response.status_code == 422
+
+
+def test_patch_nonexistent_player(client):
+    response = client.patch(
+        "/players/999",
+        json={"goals": 10}
+    )
+
+    assert response.status_code == 404
+
+
+def test_patch_empty_body(client, seed_test_players):
+    response = client.patch("/players/1", json={})
+
+    assert response.status_code == 200
+    assert response.json()["goals"] == 20
+
+
+def test_patch_persists(client, seed_test_players):
+    response = client.patch(
+        "/players/1",
+        json={"goals": 30}
+    )
+
+    assert response.status_code == 200
+
+    get_response = client.get("/players/1")
+
+    assert get_response.status_code == 200
+    assert get_response.json()["goals"] == 30
+
+
+def test_delete_player(client, seed_test_players):
+    response = client.delete("/players/1")
+
+    assert response.status_code == 204
+    assert response.content == b""
+
+    get_response = client.get("/players/1")
+    assert get_response.status_code == 404
+
+
+def test_delete_nonexistent_player(client):
+    response = client.delete("/players/999")
+
+    assert response.status_code == 404
+
+@pytest.mark.parametrize(
+    "method,expected_detail",
+    [
+        ("patch", "Unable to update player"),
+        ("delete", "Unable to delete player"),
+    ]
+)
+def test_database_lookup_failure(
+    client, method, expected_detail
+):
+    mock_db = MagicMock()
+    mock_db.get.side_effect = SQLAlchemyError(
+        "Simulated database connection failure"
+    )
+
+    def override_db():
+        yield mock_db
+
+    original_override = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[get_db] = override_db
+
+    try:
+        if method == "patch":
+            response = client.patch(
+                "/players/1",
+                json={"goals": 25}
+            )
+        else:
+            response = client.delete("/players/1")
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == expected_detail
+        mock_db.rollback.assert_called_once()
+
+    finally:
+        if original_override is None:
+            app.dependency_overrides.pop(get_db, None)
+        else:
+            app.dependency_overrides[get_db] = original_override
+
+
+@pytest.mark.parametrize(
+    "method,error_type,expected_status",
+    [
+        ("patch", SQLAlchemyError, 500),
+        ("delete", SQLAlchemyError, 500),
+        ("patch", IntegrityError, 409),
+        ("delete", IntegrityError, 409),
+    ]
+)
+def test_failed_commit_rolls_back(
+    client, method, error_type, expected_status
+):
+    mock_db = MagicMock()
+
+    mock_player = MagicMock(spec=Player)
+    mock_player.id = 1
+    mock_player.name = "Erling Haaland"
+    mock_player.age = 26
+    mock_player.position = "ST"
+    mock_player.club = "Manchester City"
+    mock_player.goals = 20
+    mock_player.assists = 5
+    mock_player.minutes_played = 1800
+
+    mock_db.get.return_value = mock_player
+
+    if error_type is IntegrityError:
+        error = IntegrityError(
+            statement="UPDATE players",
+            params={},
+            orig=Exception("Simulated constraint failure")
+        )
+    else:
+        error = SQLAlchemyError(
+            "Simulated database failure"
+        )
+
+    mock_db.commit.side_effect = error
+
+    def override_db():
+        yield mock_db
+
+    original_override = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[get_db] = override_db
+
+    try:
+        if method == "patch":
+            response = client.patch(
+                "/players/1",
+                json={"goals": 25}
+            )
+        else:
+            response = client.delete("/players/1")
+
+        assert response.status_code == expected_status
+
+        mock_db.rollback.assert_called_once()
+        mock_db.commit.assert_called_once()
+
+        if method == "patch":
+            assert response.json()["detail"] == (
+                "Player update violates a database constraint"
+                if expected_status == 409
+                else "Unable to update player"
+            )
+        else:
+            assert response.json()["detail"] == (
+                "Player cannot be deleted due to a database constraint"
+                if expected_status == 409
+                else "Unable to delete player"
+            )
+
+    finally:
+        if original_override is None:
+            app.dependency_overrides.pop(get_db, None)
+        else:
+            app.dependency_overrides[get_db] = original_override

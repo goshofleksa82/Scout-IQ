@@ -1,5 +1,5 @@
 """Pydantic v2 response contracts for ScoutIQ."""
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class PlayerResponse(BaseModel):
@@ -82,3 +82,35 @@ class PlayerCreate(BaseModel):
 
         return value
 
+class PlayerUpdate(BaseModel):
+    name: str | None = None
+    age: int | None = Field(default=None, ge=0)
+    position: str | None = None
+    club: str | None = None
+    goals: int | None = Field(default=None, ge=0)
+    assists: int | None = Field(default=None, ge=0)
+    minutes_played: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_explicit_null(cls, data):
+        if isinstance(data, dict):
+            for field, value in data.items():
+                if field in cls.model_fields and value is None:
+                    raise ValueError(
+                        f"{field} cannot be null"
+                    )
+        return data
+
+    @field_validator("name", "position", "club")
+    @classmethod
+    def reject_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+
+        value = value.strip()
+
+        if not value:
+            raise ValueError("Field cannot be blank")
+
+        return value

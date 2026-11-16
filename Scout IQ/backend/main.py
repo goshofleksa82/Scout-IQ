@@ -16,7 +16,8 @@ from schemas import (
     PlayerRankingsResponse,
     PlayerResponse,
     PlayerStatsResponse,
-    PlayerCreate
+    PlayerCreate,
+    PlayerUpdate
 )
 
 app = FastAPI(title='ScoutIQ', version='1.0.0')
@@ -204,4 +205,101 @@ def create_player(
         ) from None
 
     return new_player
+
+
+@app.patch(
+    "/players/{player_id}",
+    response_model=PlayerResponse
+)
+def update_player(
+    player_id: int,
+    updates: PlayerUpdate,
+    db: Session = Depends(get_db)
+):
+    try:
+        player = db.get(Player, player_id)
+
+        if player is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Player not found"
+            )
+
+        update_data = updates.model_dump(exclude_unset=True)
+
+        for field, value in update_data.items():
+            setattr(player, field, value)
+
+        if update_data:
+            db.commit()
+            db.refresh(player)
+
+        return player
+
+    except HTTPException:
+        raise
+
+    except IntegrityError:
+        db.rollback()
+        logger.exception("Integrity error while updating player")
+
+        raise HTTPException(
+            status_code=409,
+            detail="Player update violates a database constraint"
+        ) from None
+
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Database error while updating player")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to update player"
+        ) from None
+
+
+
+
+@app.delete(
+    "/players/{player_id}",
+    status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_player(
+    player_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+        player = db.get(Player, player_id)
+
+        if player is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Player not found"
+            )
+
+        db.delete(player)
+        db.commit()
+
+        return None
+
+    except HTTPException:
+        raise
+
+    except IntegrityError:
+        db.rollback()
+        logger.exception("Integrity error while deleting player")
+
+        raise HTTPException(
+            status_code=409,
+            detail="Player cannot be deleted due to a database constraint"
+        ) from None
+
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Database error while deleting player")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to delete player"
+        ) from None
 
